@@ -1,0 +1,353 @@
+
+	processor 6502
+        include "vcs.h"
+        include "macro.h"
+        include "xmacro.h"
+
+	org  $f000
+
+CurRow		equ $8f
+NumRows		equ 5
+EnemyRows0	equ $80
+EnemyYpos0	equ $85
+EnemyXofs0	equ $8a
+
+Temp		equ $90
+MissileY0	equ $91
+MissileY1	equ $92
+MissileX0	equ $93
+BaseX		equ $94
+
+ZPRoutine	equ $a0
+ZPWrites	equ ZPRoutine+(KernelStores-KernelStart)
+
+
+Start
+	CLEAN_START
+
+	ldx #KernelEnd-KernelStart-1
+CopyRoutineLoop
+	lda KernelStart,x
+        sta ZPRoutine,x
+        dex
+        bpl CopyRoutineLoop
+	sta WSYNC
+       ;lda PFBitmap0,y
+       ;sta PF0		
+        lda #$ff
+        sta EnemyRows0+4
+        sta EnemyYpos0+4
+        lda #170
+        sta EnemyYpos0+3
+        lda #150
+        sta EnemyYpos0+2
+        lda #130
+        sta EnemyYpos0+1
+        lda #110
+        sta EnemyYpos0+0
+        lda #40
+        sta MissileY0
+        lda #50
+        sta MissileY1
+        lda #65
+        sta BaseX
+        lda #$df
+        sta COLUPF	
+	ldy #0		
+	jsr KernelStart
+
+NextFrame
+	VERTICAL_SYNC
+
+	TIMER_SETUP 37
+        jsr ReadControls
+        jsr MoveMissiles
+        TIMER_WAIT
+
+	TIMER_SETUP 192
+        jsr DrawEnemyFormation
+        jsr DrawBelowFormation
+        jsr DrawPlayerBase
+        lda #$98
+        sta COLUBK	
+        lda #0
+        sta ENABL
+        sta ENAM1	
+	TIMER_SETUP 29
+        TIMER_WAIT
+        lda #$98
+        sta COLUBK	
+        jmp NextFrame
+
+DrawEnemyFormation
+        lda #4
+        sta CurRow
+
+WaitForRow
+	jsr DrawMissiles
+       ldx CurRow
+        lda EnemyYpos0,x
+        cmp INTIM
+        bcc WaitForRow
+
+        lda #1		
+       sta NUSIZ1
+        sta CXCLR	
+
+        sta WSYNC
+        jsr DrawFormation
+
+        lda CXP0FB
+        ora CXP1FB
+        and #$c0
+        beq NoCollision
+
+	lda MissileX0
+        ldx #$ff
+        sec
+        sbc #13
+DivideBy12
+	inx
+        sbc #12
+        bcs DivideBy12
+        txa
+
+        tax
+        lda PowersOf2,x
+        eor #$ff
+        ldx CurRow
+        and EnemyRows0,x
+        sta EnemyRows0,x
+
+        lda #0
+        sta MissileY0
+NoCollision
+        dec CurRow
+        bpl WaitForRow
+        lda #0		
+        sta NUSIZ0
+        sta NUSIZ1
+        rts
+
+DrawFormation
+        ldx CurRow
+        lda EnemyRows0,x
+        ldx #1	
+ShiftLoop
+        ldy #RESP0
+        ror
+        bcs NoClearEnemy0
+        ldy #$30	
+NoClearEnemy0
+        sty ZPWrites,x
+        inx
+        inx
+        ldy #RESP1
+        ror
+        bcs NoClearEnemy1
+        ldy #$30	
+NoClearEnemy1
+        sty ZPWrites,x
+        inx
+        inx
+        cpx #16		
+        bcc ShiftLoop
+
+        ldy EnemyColorFrame0	
+        jsr ZPRoutine		
+        rts
+
+KernelStart
+KernelLoop
+	lda EnemyFrame0,y	
+	sta WSYNC
+        ldx EnemyColorFrame0,y	
+        sta GRP0
+        sta GRP1
+        stx COLUP0
+        stx COLUP1
+        ldx #0		
+KernelStores
+
+        sta RESP1,x
+        sta RESP1,x
+        sta RESP1,x
+        sta RESP1,x
+        sta RESP1,x
+        sta RESP1,x
+        sta RESP1,x
+        sta RESP1,x
+
+        dey		
+        stx.w GRP0	
+        sta RESP0	
+        stx GRP1	
+        sta RESP1	
+        bpl KernelLoop	
+        rts
+KernelEnd
+
+DrawBelowFormation
+	lda #194 	
+        sta COLUP0 
+        sta COLUP1
+        jsr DrawMissiles
+	lda INTIM
+        cmp #1		
+        bcs DrawBelowFormation
+        sta WSYNC	
+	rts
+
+DrawMissiles
+	lda INTIM	
+        pha
+        sec
+        sbc MissileY0
+        cmp #4		
+        lda #3		
+        adc #0		
+        sta ENABL	
+	pla
+        sec
+        sbc MissileY1
+        cmp #0		
+        lda #0	
+        adc #0		
+      	
+        rts
+        
+DrawPlayerBase
+	lda BaseX
+        ldx #0
+        jsr SetHorizPos	
+	ldy ColorFrame0	
+DrawBaseLoop
+	lda Frame0,y
+        ldx ColorFrame0,y
+        sta WSYNC
+        sta GRP0
+        stx COLUP0
+        dey
+        bpl DrawBaseLoop 
+        rts
+
+MoveMissiles
+	lda MissileY0
+        beq NoMoveMiss0
+        inc MissileY0
+NoMoveMiss0
+	lda MissileY1
+        beq NoMoveMiss1
+        dec MissileY1
+NoMoveMiss1
+	rts
+
+ReadControls
+	ldx BaseX
+	bit SWCHA	
+        bvs NoMoveLeft	
+        dex
+        bne NoMoveRight
+NoMoveLeft
+	bmi NoMoveRight	
+	inx
+        bmi NoStoreX
+NoMoveRight
+	stx BaseX
+NoStoreX
+
+	bit INPT4	
+        bmi NoFireButton 
+        lda #10
+        sta MissileY0	
+        lda BaseX
+        clc
+        adc #6
+        sta MissileX0
+        ldx #4
+        jsr SetHorizPos	
+NoFireButton
+	rts
+
+
+SetHorizPos
+        sta HMCLR
+        sta WSYNC       
+        sec             
+DivideLoop
+        sbc #15         
+        bcs DivideLoop  
+        eor #7          
+        asl
+        asl
+        asl
+        asl
+        sta HMP0,x      
+        sta RESP0,x     
+        sta WSYNC
+        sta HMOVE
+        rts            
+
+
+	org $ff00
+EnemyFrame0
+	.byte #0
+        .byte #%11000000;$AE
+        .byte #%11000000;$AE
+        .byte #%11000000;$AE
+        .byte #%11111111;$AC
+        .byte #%11000000;$8E
+        .byte #%11000000;$8E
+        .byte #%11111111;$98
+        .byte #%11111111;
+        
+EnemyColorFrame0
+	.byte #8	
+        .byte #$30;
+        .byte #$30;
+        .byte #$30;
+        .byte #$30;
+        .byte #$30;
+        .byte #$30;
+        .byte #$30;
+        .byte #$30;
+Frame0
+	.byte #0
+        .byte #%00000000;$FA
+        .byte #%00000000;$FA
+        .byte #%01000100;$FA
+        .byte #%00101000;$FA
+        .byte #%00010000;$FA
+        .byte #%00010000;$FA
+        .byte #%01111100;$FA
+        .byte #%00010000;$FA
+        .byte #%00010000;$FA
+        .byte #%00111000;$FA
+        .byte #%00111110;$FA
+        .byte #%00111110;$FA
+        .byte #%00111000
+        
+
+ColorFrame0
+	.byte #13
+        .byte #194
+        .byte #194;
+        .byte #194;
+        .byte #194;
+        .byte #194;
+        .byte #194;
+        .byte #194;
+        .byte #194;
+        .byte #194;
+        .byte #194;
+        .byte #194;
+        .byte #194;
+        .byte #194;
+        .byte #194;
+
+PowersOf2
+	.byte #$1,#$2,#$4,#$8,#$10,#$20,#$40,#$80
+        
+	org $fffc
+        .word Start
+        .word Start
